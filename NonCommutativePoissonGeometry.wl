@@ -196,8 +196,8 @@ DefineOuterComposition[cat_]:=With[
 ];
 
 DefineCategoryOfPolyvectorFields[Dcat_,cat_]:=(
-	If[!ValueQ[Dcat["Composition"]],Dcat["Composition"]=cat["Composition"]];
-	If[!ValueQ[Dcat["CircleTimes"]],Dcat["CircleTimes"]=cat["CircleTimes"]];
+	If[!ValueQ[Dcat["Composition"],Method->"TrialEvaluation"],Dcat["Composition"]=cat["Composition"]];
+	If[!ValueQ[Dcat["CircleTimes"],Method->"TrialEvaluation"],Dcat["CircleTimes"]=cat["CircleTimes"]];
 	With[
 		{Composition=cat["Composition"],CircleTimes=Dcat["CircleTimes"],OuterCompose=cat["OuterComposition"]}
 	,
@@ -262,10 +262,46 @@ DefineCategoryOfPolyvectorFields[Dcat_,cat_]:=(
 		(*Defining Trace of a PolyVectorfield*)
 		NonCommutativePoissonGeometry`CyclicSpace`DefineCanonicalFormGraded[Dcat];
 		(*Defining Action of a Trace of a Polyvectorfield*)
-		AbstractAlgebra`GroundField`SetMultilinear[Dcat["Tr"],Dcat["groundfield"]];
+		AbstractAlgebra`GroundField`SetMultiLinear[Dcat["Tr"],Dcat["groundfield"]];
 		Dcat["Tr"][x_][y_?(cat["TensorMonomialQ"])]:=cat["OuterTr"][x[y]];
 	];
 );
+
+(*Defining free category of polyvector fields*)
+DefineFreePolyvectorFields[Dcat_,cat_]:=With[
+	{\[Delta]=cat["FreeDerivation"],\[Gamma]=cat["Uniderivation"],Inv=Global`Inv}
+,
+	(*Defining Category of vector fields*)
+	Dcat["vectorfields"]=Join[
+		Map[Subscript[\[Delta], #]&,cat["groupoidgenerators"]]
+	,
+		Map[Subscript[\[Gamma], #]&,cat["objects"]]
+	];
+	cat["s"][Subscript[\[Delta], X_]]:=Dcat["t"][X];
+	cat["t"][Subscript[\[Delta], X_]]:=Dcat["s"][X];
+	Subscript[\[Delta], Inv[f_]]:=-cat["Composition"][f,Subscript[\[Delta], f],f];
+	cat["s"][Subscript[\[Gamma], o_]]:=o;
+	cat["t"][Subscript[\[Gamma], o_]]:=o;
+	Dcat["s"]=cat["s"];
+	Dcat["t"]=cat["t"];
+	DefineCategoryOfPolyvectorFields[Dcat,cat];
+	(*Defining VectorField Action*)
+	Subscript[\[Delta],Inv[X_?(cat["GroupoidGeneratorQ"])]]:=-Dcat["Composition"][X,Subscript[\[Delta], X],X];
+	Subscript[\[Delta], X_?(cat["GroupoidGeneratorQ"])][Y_?(cat["GroupoidGeneratorQ"])]:=If[X===Y,
+		Subscript[cat["Id"], cat["s"][X]]\[CircleTimes]Subscript[cat["Id"], cat["t"][X]]
+	,
+		0
+	];
+	Subscript[\[Gamma], o_][x_?(cat["GeneratorQ"])]:=Piecewise[{
+		{Subscript[cat["Id"], o]\[CircleTimes]x-x\[CircleTimes]Subscript[cat["Id"], o],cat["t"][x]===o&&cat["s"][x]===o}
+	,
+		{Subscript[cat["Id"], o]\[CircleTimes]x,cat["t"][x]=!=o&&cat["s"][x]===o}
+	,
+		{-x\[CircleTimes]Subscript[cat["Id"], o],cat["t"][x]===o&&cat["s"][x]=!=o}
+	,
+		{0,cat["t"][x]=!=o&&cat["s"][x]=!=o}
+	}];
+];
 
 End[]
 

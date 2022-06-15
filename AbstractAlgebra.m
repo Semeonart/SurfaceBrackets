@@ -15,36 +15,29 @@ FieldElementQ[expr_,field_]:=Module[
 	{i,xtab}
 ,
 	Switch[expr,
-		_?NumberQ,
-			Return[True],
-		_Times,
-			For[i=1,i<=Length[expr],i++,
-				If[!FieldElementQ[expr[[i]],field],Return[False]];
-			];
+		_?NumericQ,
 			Return[True],
 		_Plus,
 			For[i=1,i<=Length[expr],i++,
 				If[!FieldElementQ[expr[[i]],field],Return[False]];
 			];
 			Return[True],
-		_?(Or@@Table[MatchQ[#,field["generators"][[i]]],{i,1,Length[field["generators"]]}]&),
-			Return[True],
-		_AlgebraicNumber,
-			Return[True],
-		_Root,
+		_Times,
+			For[i=1,i<=Length[expr],i++,
+				If[!FieldElementQ[expr[[i]],field],Return[False]];
+			];
 			Return[True],
 		_Power,
-			If[FieldElementQ[expr[[1]],field],
+			If[FieldElementQ[expr[[1]],field]&&FieldElementQ[expr[[2]],field],
 				Return[True]
 			,
 				If[safemode,
-					Print["Power is reserved for commutative elements, expr=",expr, ", generators",field["generators"]];
-					Message[FieldElementQ::pow];
-					Return[Indeterminate]
-				,
-					Return[False]
+					Print["Warning: Power is used for element outside groundfield, expr=",expr, ", generators",field["generators"]];
 				];
+				Return[False]
 			],
+		_?(Or@@Table[MatchQ[#,field["generators"][[i]]],{i,1,Length[field["generators"]]}]&),
+			Return[True],
 		_,
 			Return[False];
 	];
@@ -80,6 +73,13 @@ FactorFieldOut[expr0_,field_]:=Module[
 	];
 ];
 
+(*FactorizableFieldElementQ[x_Times,groundfield_]:=Module[
+	{xtab=x}
+,
+	xtab[[0]]=List;
+	Return[Or@@Map[FieldElementQ[#,groundfield]&,xtab]];
+];*)
+
 SetMultiLinear[F_,groundfield_,SimplifyF_]:=Module[
 	{pos}
 ,
@@ -99,12 +99,27 @@ SetMultiLinear[F_,groundfield_,SimplifyF_]:=Module[
 	,
 		{comm,ncm}=FactorFieldOut[y,groundfield];
 		Return[comm F[x,ncm,z]];
-	];
+	](*/;FactorizableFieldElementQ[y,groundfield]*);
 	F[x___,0,z___]:=0;
 	F[x___,y_?(#=!=1&&FieldElementQ[#,groundfield]&),z___]:=y F[x,1,z];
 ];
 
 SetMultiLinear[MultF_,groundfield_]:=SetMultiLinear[MultF,groundfield,#&];
+
+(*Field of Elementary Functions*)
+
+elementaryfunctions=FromEntity/@MathematicalFunctionData["ElementaryFunctions"];
+
+BareFunction[expr_]:=Switch[expr,
+	_Function,
+		expr[[1,0]],
+	_,
+		expr
+];
+
+bareelementaryfunctions=DeleteDuplicates[Map[BareFunction,elementaryfunctions]];
+
+ElementaryFunctionQ[expr_]:=Position[bareelementaryfunctions,expr[[0]],1]!={};
 
 End[]
 
@@ -162,7 +177,7 @@ DefinePermutation[\[CapitalSigma]_,\[Sigma]_,CircleTimes_,groundfield_]:=(
 (*Multiplication map*)
 DefineMultiplicationMap[\[Mu]_,CircleTimes_,NonCommutativeMultiply_,groundfield_]:=(
 	AbstractAlgebra`GroundField`SetMultiLinear[\[Mu],groundfield];
-	\[Mu][CircleTimes[x__]]:=NonCommutativeMultiply[x];
+	\[Mu][CircleTimes[x_,y__]]:=NonCommutativeMultiply[x,y];
 );
 
 (*Multiplication of elements*)
@@ -336,11 +351,11 @@ DefineVectorSpaceOfOperators[groundfield_]:=(
 
 DefineCompositionAction[algebra_]:=(
 	(*Defining Action of Composition of Operators*)
-	If[!ValueQ[algebra["Id"]],
+	If[!ValueQ[algebra["Id"],Method->"TrialEvaluation"],
 		algebra["Id"]=Global`Id;
 	];
 	algebra["Id"][x_]:=x;
-	If[!ValueQ[algebra["NonCommutativeMultiply"]],
+	If[!ValueQ[algebra["NonCommutativeMultiply"],Method->"TrialEvaluation"],
 		algebra["NonCommutativeMultiply"]=SmallCircle;
 	];
 	With[
@@ -362,12 +377,12 @@ DefineCompositionCategory[cat_,ElementaryQ_]:=With[
 ,
 	DefineVectorSpaceOfOperators[cat["groundfield"]];
 	(*Defining Action of Identity Operators*)
-	If[!ValueQ[cat["Id"]],
+	If[!ValueQ[cat["Id"],Method->"TrialEvaluation"],
 		cat["Id"]=Global`Id;
 	];
 	Subscript[cat["Id"],_][x_?ElementaryQ]:=x;
 	(*Defining Action of Composition of Operators*)
-	If[!ValueQ[cat["Composition"]],
+	If[!ValueQ[cat["Composition"],Method->"TrialEvaluation"],
 		cat["Composition"]=SmallCircle
 	];
 	cat["objects"]={Subscript[cat["V"], _]};
@@ -443,7 +458,7 @@ DefineOnGenerators[\[Tau]_,algebra_]:=With[
 
 DefineAutomorphismGroupAlgebra[algebra_,aut_]:=(
 	aut["groundfiend"]=algebra["groundfield"];
-	If[!ValueQ[aut["NonCommutativeMultiply"]],
+	If[!ValueQ[aut["NonCommutativeMultiply"],Method->"TrialEvaluation"],
 		aut["NonCommutativeMultiply"]=SmallCircle
 	];
 	AbstractAlgebra`FinitelyGenerated`DefineGroupAlgebra[aut];
@@ -461,19 +476,19 @@ Begin["`FinitelyGenerated`"]
 
 DefineAssociativeAlgebra[algebra_]:=(
 	(*Testing preinitialized values*)
-	If[!ValueQ[algebra["generators"]],
+	If[!ListQ[algebra["generators"]],
 		Print["Generators of ",algebra," undefined"];
 		Return[Indeterminate];
 	];
 	(*Setting default values*)
-	If[!ValueQ[algebra["groundfield"]["generators"]],algebra["groundfield"]["generators"]={}];
-	If[!ValueQ[algebra["NonCommutativeMultiply"]],
+	If[!ListQ[algebra["groundfield"]["generators"]],algebra["groundfield"]["generators"]={}];
+	If[!ValueQ[algebra["NonCommutativeMultiply"],Method->"TrialEvaluation"],
 			Unprotect[NonCommutativeMultiply];
 			ClearAll[NonCommutativeMultiply];
 			algebra["NonCommutativeMultiply"]=NonCommutativeMultiply
 	];
 	(*Defining associative multiplication*)
-	If[!ValueQ[algebra["Id"]],algebra["Id"]=1];
+	If[!ValueQ[algebra["Id"],Method->"TrialEvaluation"],algebra["Id"]=1];
 	AbstractAlgebra`Associative`DefineUnitalMultiplication[algebra["NonCommutativeMultiply"],algebra["groundfield"],algebra["Id"]];
 	With[
 		{MultF=algebra["NonCommutativeMultiply"]}
@@ -502,7 +517,7 @@ DefineGroupAlgebra[algebra_]:=(
 
 DefineTensorAlgebra[algebra_]:=(
 	(*Setting default values*)
-	If[!ValueQ[algebra["CircleTimes"]],algebra["CircleTimes"]=CircleTimes];
+	If[!ValueQ[algebra["CircleTimes"],Method->"TrialEvaluation"],algebra["CircleTimes"]=CircleTimes];
 	AbstractAlgebra`Associative`DefineAssociativeMultiplication[algebra["CircleTimes"],algebra["groundfield"]];
 	(*Defining Permutation Map*)
 	AbstractAlgebra`TensorAlgebra`DefinePermutation[algebra["\[CapitalSigma]"],algebra["\[Sigma]"],algebra["CircleTimes"],algebra["groundfield"]];
@@ -532,8 +547,8 @@ DefineIdentityMorphisms[cat_]:=Module[
 	{i}
 ,
 	(*Setting default notations*)
-	If[!ValueQ[cat["Id"]],cat["Id"]=Global`e];
-	If[!ValueQ[cat["idmorphisms"]],cat["idmorphisms"]=Map[Subscript[cat["Id"], #]&,cat["objects"]]];
+	If[!ValueQ[cat["Id"],Method->"TrialEvaluation"],cat["Id"]=Global`e];
+	If[!ValueQ[cat["idmorphisms"],Method->"TrialEvaluation"],cat["idmorphisms"]=Map[Subscript[cat["Id"], #]&,cat["objects"]]];
 	(*Defining sources and targets for identity morphisms*)
 	cat["s"][Subscript[cat["Id"], v_]]:=v;
 	cat["t"][Subscript[cat["Id"], v_]]:=v;
@@ -651,12 +666,20 @@ DefineSourcesAndTargets[cat_]:=With[
 	(*Sources and Targets for Localized Categories*)
 	cat["s"][Global`Inv[x_]]:=cat["t"][x];
 	cat["t"][Global`Inv[x_]]:=cat["s"][x];
+	(*Topological Notation*)
+	If[ValueQ[cat["TopologicalNotation"],Method->"TrialEvaluation"],
+		If[cat["TopologicalNotation"],
+			Needs["Notation`"];
+			Notation[ParsedBoxWrapper[RowBox[{"cat", "[", "\"T\"", "]"}]] \[DoubleLongLeftRightArrow] ParsedBoxWrapper[RowBox[{"cat", "[", "\"t\"", "]"}]]];
+			Notation[ParsedBoxWrapper[RowBox[{"cat", "[", "\"H\"", "]"}]] \[DoubleLongLeftRightArrow] ParsedBoxWrapper[RowBox[{"cat", "[", "\"s\"", "]"}]]];
+		];
+	];
 ];
 
 DefineCategory[cat_]:=Module[
 	{MultF}
 ,
-	If[!ValueQ[cat["Composition"]],cat["Composition"]=SmallCircle];
+	If[!ValueQ[cat["Composition"],Method->"TrialEvaluation"],cat["Composition"]=SmallCircle];
 	cat["Composition"][x_]:=x;
 	AbstractAlgebra`Associative`DefineUnitalMultiplication[cat["Composition"],cat["groundfield"]];
 	DefineIdentityMorphisms[cat];
@@ -899,7 +922,7 @@ Begin["`Graded`"]
 DefineGraded[algebra_]:=Module[
 	{}
 ,
-	If[!ValueQ[algebra["GradingMultF"]],
+	If[!ValueQ[algebra["GradingMultF"],Method->"TrialEvaluation"],
 		algebra["GradingMultF"]=Plus;
 	];
 	Switch[algebra["GradingMultF"],
@@ -907,7 +930,7 @@ DefineGraded[algebra_]:=Module[
 		Times,algebra["Deg"][Global`Inv[x_]]:=1/algebra["Deg"][x],
 		_,Print[""]
 	];
-	If[!ValueQ[algebra["GradedOperationQ"]],
+	If[!ValueQ[algebra["GradedOperationQ"],Method->"TrialEvaluation"],
 		algebra["Deg"][Times]=0;
 		algebra["Deg"][Star]=0;
 		algebra["Deg"][algebra["NonCommutativeMultiply"]]=0;
@@ -923,7 +946,7 @@ DefineGraded[algebra_]:=Module[
 			]&;
 		];
 	];
-	algebra["Deg"][x_?NumberQ]:=algebra["GradingMultF"][];
+	algebra["Deg"][x_?NumericQ]:=algebra["GradingMultF"][];
 	algebra["Deg"][x_?(algebra["GradedOperationQ"])]:=Module[
 		{xtab=x,degtab,opdeg}
 	,
@@ -959,6 +982,7 @@ DefineGraded[algebra_]:=Module[
 		];
 		Return[{degtab,HomogeneousF}];
 	];
+	algebra["HomogeneousQ"][expr_]:=(Length[algebra["GetHomogeneousDecomposition"][expr][[1]]]==1);
 ];
 
 (*SuperMultiplication of Subscript[Z, 2] graded modules*)
@@ -989,10 +1013,10 @@ Begin["`Filtered`"]
 DefineFiltration[algebra_]:=Module[
 	{}
 ,
-	If[!ValueQ[algebra["GradingMultF"]],
+	If[!ValueQ[algebra["GradingMultF"],Method->"TrialEvaluation"],
 		algebra["GradingMultF"]=Plus;
 	];
-	If[!ValueQ[algebra["GradedOperationQ"]],
+	If[!ValueQ[algebra["GradedOperationQ"],Method->"TrialEvaluation"],
 		algebra["Deg"][Times]=0;
 		algebra["Deg"][Star]=0;
 		With[
@@ -1006,7 +1030,7 @@ DefineFiltration[algebra_]:=Module[
 		];
 	];
 	algebra["Deg"][algebra["Id"]]=0;
-	algebra["Deg"][x_?NumberQ]:=algebra["GradingMultF"][];
+	algebra["Deg"][x_?NumericQ]:=algebra["GradingMultF"][];
 	algebra["Deg"][x_?(algebra["GradedOperationQ"])]:=Module[
 		{xtab=x,degtab,opdeg}
 	,
@@ -1035,7 +1059,7 @@ DefineStrictFilteredSpan[algebra_,substN_]:=(
 			ans=Join[ans,Map[algebra["NonCommutativeMultiply"][algebra["generators"][[i]],#]&,algebra["fspan"][deg-algebra["Deg"][algebra["generators"][[i]]]]]];
 		];
 		Switch[algebra["Deg"][algebra["generators"][[1]]],
-		_?NumberQ,
+		_?NumericQ,
 			ans=Join[ans,algebra["fspan"][deg-1]],
 		_List,
 			n=Length[algebra["Deg"][algebra["generators"][[1]]]];
@@ -1051,7 +1075,7 @@ DefineStrictFilteredSpan[algebra_,substN_]:=(
 		{n,ans}
 	,
 		Switch[algebra["Deg"][algebra["generators"][[1]]],
-		_?NumberQ,
+		_?NumericQ,
 			ans=Complement[algebra["fspan"][deg],algebra["fspan"][deg-1]],
 		_List,
 			n=Length[algebra["Deg"][algebra["generators"][[1]]]];
@@ -1252,7 +1276,7 @@ DefineIdealBasis[ideal_,c_,substN_]:=Module[
 		{filename,candidates,ans}
 	,
 		(*Trying to load the answer*)
-		If[ValueQ[ideal["cachedir"]],
+		If[ValueQ[ideal["cachedir"],Method->"TrialEvaluation"],
 			filename=FileNameJoin[{ideal["cachedir"],"principal-candidates-"<>ToString[{deg,num}]<>".m"}];
 			If[FileExistsQ[filename],Return[Import[filename]]];
 		];
@@ -1271,7 +1295,7 @@ DefineIdealBasis[ideal_,c_,substN_]:=Module[
 		candidates=Map[ideal["PrecalculateProduct"][num,#]&,candidates,1];
 		ans=ideal["SelectCandidates"][ideal["basis"][deg-1],candidates];
 		(*Saving the answer*)
-		If[ValueQ[ideal["cachedir"]],
+		If[ValueQ[ideal["cachedir"],Method->"TrialEvaluation"],
 			Export[filename,ans]
 		];
 		Return[ans];
@@ -1282,7 +1306,7 @@ DefineIdealBasis[ideal_,c_,substN_]:=Module[
 		{ans,i,coeffpairs,filename}
 	,
 		(*Trying to load cached answer*)
-		If[ValueQ[ideal["cachedir"]],
+		If[ValueQ[ideal["cachedir"],Method->"TrialEvaluation"],
 			filename=FileNameJoin[{ideal["cachedir"],ToString[deg]<>".m"}];
 			If[FileExistsQ[filename],
 				Return[Import[filename]]
@@ -1293,7 +1317,7 @@ DefineIdealBasis[ideal_,c_,substN_]:=Module[
 		If[debugAll,Print["coeffpairs=",coeffpairs]];
 		ans=Join[ideal["basis"][deg-1],ideal["SelectCandidates"][ideal["basis"][deg-1],coeffpairs]];
 		(*Saving cached answer*)
-		If[ValueQ[ideal["cachedir"]],Export[filename,ans]];
+		If[ValueQ[ideal["cachedir"],Method->"TrialEvaluation"],Export[filename,ans]];
 		Return[ans];
 	];
 	(*The following function presents elemtent of the ideal as expression in generators*)

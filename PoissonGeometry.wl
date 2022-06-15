@@ -37,6 +37,10 @@ SymplecticLeafDimension[algebra_]:=Module[
 	Return[MatrixRank[jacobi/.subst]];
 ];
 
+End[]
+
+Begin["`TestBrackets`"]
+
 TestBracket[algebra_,SimplifyF_]:=Module[
 	{i=0,j=0,k=0,diff,JacobiLHS,Bracket:=algebra["PoissonBracket"]}
 ,
@@ -68,13 +72,13 @@ TestBracket[algebra_,SimplifyF_]:=Module[
 	Return[True];
 ];
 
-TestBracket[algebra_]:=TestBracket[algebra,Factor];
+TestBracket[algebra_]:=TestBracket[algebra,algebra["CanonicalForm"]];
 
-CasimirQ[expr_,algebra_]:=Module[
+CasimirQ[expr_,algebra_,SimplifyF_]:=Module[
 	{i,diff}
 ,
 	For[i=1,i<=Length[algebra["generators"]],i++,
-		diff=Factor[algebra["PoissonBracket"][algebra["generators"][[i]],expr]];
+		diff=SimplifyF[algebra["PoissonBracket"][algebra["generators"][[i]],expr]];
 		If[diff=!=0,
 			If[!silent,Print["Elements ",algebra["generators"][[i]]," and ",expr," do not Poisson commute"]];
 			Return[False];
@@ -82,6 +86,66 @@ CasimirQ[expr_,algebra_]:=Module[
 	];
 	Return[True];
 ];
+
+CasimirQ[expr_,algebra_]:=CasimirQ[expr,algebra,algebra["CanonicalForm"]];
+
+End[]
+
+Begin["`Homomorphisms`"]
+
+silent=False;
+
+TestPoissonHomomorphism[commalg1_,commalg2_,substhom_]:=Module[
+	{i,j,diff}
+,
+	CommutativeAlgebra`FinitelyGenerated`TestHomomorphism[commalg1,commalg2,substhom];
+	For[j=2,j<=Length[commalg1["generators"]],i++,
+		For[i=1,i<j,i++,
+			diff=commalg2["CanonicalForm"][(commalg1["PoissonBracket"][commalg1["generators"][[i]],commalg2["generators"][[j]]]/.substhom)-commalg2["PoissonBracket"][commalg1["generators"][[i]]/.substhom,commalg2["generators"][[j]]/.substhom]];
+			If[diff=!=0,
+				If[!silent,Print["Poisson homomorphism fails at generators #=",{i,j}]];
+				Return[False];
+			];
+		];
+	];
+	Return[True];
+];
+
+(*Trying to solve for the image of the generator*)
+GetRel[gen1_,gen2_,commalg1_,commalg2_,substhom_,SimplifyF_]:=Module[
+	{diff,vars,pos,ctab}
+,
+	diff=SimplifyF[(commalg1["PoissonBracket"][gen1,gen2]/.substhom)-commalg2["PoissonBracket"][gen1/.substhom,gen2/.substhom]];
+	vars=Select[Variables[diff],commalg1["GeneratorQ"]];
+	If[Length[vars]==1,
+		pos=Position[diff,vars[[1]]];
+		If[Length[pos]==1,
+			ctab=CoefficientList[diff,vars[[1]]];
+			If[Length[ctab]==2,
+				Return[{vars[[1]]->-ctab[[1]]/ctab[[2]]}];
+			];
+		];
+	];
+	Return[{}];
+];
+
+GetRel[gen1_,gen2_,commalg1_,commalg2_,substhom_]:=GetRel[gen1,gen2,commalg1,commalg2,substhom,commalg2["CanonicalForm"]];
+
+(*Trying to complete the substitution for Poisson homomorphism using elementary necessary requirements*)
+ExtendHomomorphism[commalg1_,commalg2_,subst0_,SimplifyF_]:=Module[
+	{i,j,ans}
+,
+	ans=subst0;
+	For[j=2,j<=Length[commalg1["generators"]],j++,
+		For[i=1,i<j,i++,
+			ans=Join[ans,GetRel[commalg1["generators"][[i]],commalg1["generators"][[j]],commalg1,commalg2,ans,SimplifyF]];
+			If[Length[ans]==Length[commalg1["generators"]],Break[]];
+		];
+	];
+	Return[ans];
+];
+
+ExtendHomomorphism[commalg1_,commalg2_,subst0_]:=ExtendHomomorphism[commalg1,commalg2,subst0,commalg2["CanonicalForm"]];
 
 End[]
 
@@ -154,7 +218,3 @@ r[Subscript[X_, n_],i_,j_]:=r[Subscript[X, n],i,j]=Tr[Flatten[TensorProduct[e[Su
 End[]
 
 EndPackage[]
-
-
-(* ::InheritFromParent:: *)
-(*"PoissonGeometry`"*)

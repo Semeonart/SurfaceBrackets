@@ -7,10 +7,19 @@ Begin["`Graded`"]
 silent=False;
 
 DefineFiltration[commalg_,gradedflag_]:=(
-	commalg["ZeroDeg"]=If[NumberQ[commalg["Deg"][commalg["generators"][[1]]]],
-		0
-	,
-		Map[0&,commalg["Deg"][commalg["generators"][[1]]]]
+	If[!ValueQ[commalg["ZeroDeg"],Method->"TrialEvaluation"],
+		commalg["ZeroDeg"]=If[NumberQ[commalg["Deg"][commalg["generators"][[1]]]],
+			0
+		,
+			Map[0&,commalg["Deg"][commalg["generators"][[1]]]]
+		];
+	];
+	If[!ValueQ[commalg["InadmissibleGradingQ"]],
+		If[NumberQ[commalg["ZeroDeg"]],
+			commalg["InadmissibleGradingQ"]:=(#<0)&
+		,
+			commalg["InadmissibleGradingQ"][degtab_]:=Or@@Flatten[Map[#<0&,degtab]];
+		];
 	];
 	commalg["Deg"][x_?(NumberQ)]:=commalg["ZeroDeg"];
 	commalg["Deg"][x_Plus]:=Module[
@@ -131,11 +140,9 @@ debug=False;
 debugAll=False;
 
 (*polynomialalg should be a graded free commutative algebra, \[Rho] is an injection to polynomial algebra*)
-DefineStrictGradedAlgebra[commalg_,generators_,polynomialalg_,\[Rho]_]:=Module[
+DefineStrictGradedAlgebra[commalg_,polynomialalg_,\[Rho]_]:=Module[
 	{k,vars=polynomialalg["generators"]}
 ,
-	ClearAll[commalg];
-	commalg["generators"]=generators;
 	commalg["GeneratorQ"][x_]:=Position[commalg["generators"],x,1]!={};
 	commalg["\[Rho]"]=\[Rho];
 	commalg["polynomialalg"]=polynomialalg;
@@ -352,20 +359,71 @@ Begin["`FinitelyGenerated`"]
 
 silent=False;
 
+ReduceOrder[order_]:=Module[
+	{ans={},i}
+,
+	For[i=1,i<=Length[order],i++,
+		If[DeleteCases[RowReduce[Append[ans,order[[i]]]][[-1]],0]!={},
+			AppendTo[ans,order[[i]]];
+		];
+	];
+	Return[ans];
+];
+
+LexOrder[n_]:=Table[KroneckerDelta[i,j],{i,1,n},{j,1,n}];
+
+DegRevLexOrderAux[n_,degtab_]:=Module[
+	{i,j}
+,
+	Return[ReduceOrder[Join[degtab,Table[If[i<=n-j,1,0],{j,1,n-1},{i,1,n}]]]];
+];
+
+DegRevLexOrderAux[n_]:=DegRevLexOrderAux[n,{Table[1,n]}];
+
+DegRevLexOrder[commalg_]:=Module[
+	{degtab}
+,
+	degtab=Map[commalg["Deg"],commalg["generators"]];
+	Switch[Depth[degtab],
+	2,
+		degtab={degtab},
+	3,
+		degtab=Transpose[degtab],
+	_,
+		Print["Unexpected depth in degree tab ",degtab];
+		Return[Indeterminate];
+	];
+	Return[DegRevLexOrderAux[Length[commalg["generators"]],degtab]];
+];
+
+ProductOrder[orders__]:=Module[
+	{ordertab=List[orders]}
+,
+	ordertab=DeleteCases[ordertab,{}];
+	Switch[Length[ordertab],
+	0,
+		Return[{}],
+	1,
+		Return[ordertab[[1]]],
+	_,
+		Return[Fold[ArrayFlatten[{{#,0},{0,#2}}] &, ordertab[[1]], Drop[ordertab,1]]];
+	];
+];
+
 Define[commalg_]:=Module[
 	{i}
 ,
-	If[!ValueQ[commalg["generators"]],
+	If[!ListQ[commalg["generators"]],
 		Print["Generators are not defined in ",commalg];
 		Return[Indeterminate];
 	];
 	commalg["GeneratorQ"][expr_]:=(Or@@Map[MatchQ[expr,#]&,commalg["generators"]]);
-	If[!ValueQ[commalg["relations"]],
+	If[!ListQ[commalg["relations"]],
 		Print["Relations are not defined in ",commalg];
 		Return[Indeterminate];
 	];
 	(*Default coefficient domain is rational functions in parameters*)
-	If[!ValueQ[commalg["coefficientdomain"]],
+	If[!ValueQ[commalg["coefficientdomain"],Method->"TrialEvaluation"],
 		commalg["coefficientdomain"]=RationalFunctions;
 	];
 	(*Default weights used for monomial ordering is 1*)
@@ -373,14 +431,14 @@ Define[commalg_]:=Module[
 		With[
 			{x=commalg["generators"][[i]]}
 		,
-			If[!ValueQ[commalg["Deg"][x]],
+			If[!ValueQ[commalg["Deg"][x],Method->"TrialEvaluation"],
 				commalg["Deg"][x]=1;
 			];
 		];
 	];
 	(*Default monomial ordering is weighted degree reverse lexicographic*)
-	If[!ValueQ[commalg["monomialorder"]],
-		commalg["monomialorder"]=Prepend[Table[-KroneckerDelta[i,j],{i,1,Length[commalg["generators"]]-1},{j,1,Length[commalg["generators"]]}],Map[commalg["Deg"],commalg["generators"]]]
+	If[!ListQ[commalg["monomialorder"]],
+		commalg["monomialorder"]=DegRevLexOrder[commalg];
 	];
 	commalg["Weight"][monomial_]:=Module[
 		{rules}
@@ -390,7 +448,7 @@ Define[commalg_]:=Module[
 			Print["Incorrect input in ",commalg["Weight"],", rules=",rules];
 			Return[Indeterminate];
 		];
-		Return[commalg["monomialorder"].rules[[1,1]]];
+		Return[commalg["monomialorder"] . rules[[1,1]]];
 	];
 	commalg["WeightLessQ"][monomial1_,monomial2_]:=Module[
 		{wt1,wt2,j}
@@ -404,15 +462,18 @@ Define[commalg_]:=Module[
 		Return[False];
 	];
 	(*Defining Groebner Basis and Canonical Form*)
-	If[!ValueQ[commalg["gb"]],
-		commalg["gb"]:=(
+	If[!ListQ[commalg["gb"]],
+		commalg["gb"]:=If[Length[commalg["relations"]]==0,
+			{}
+		,
 			If[!silent,PrintTemporary["Computing Groebner Basis in ",commalg]];
 			commalg["gb"]=GroebnerBasis[commalg["relations"],commalg["generators"],MonomialOrder->commalg["monomialorder"],CoefficientDomain->commalg["coefficientdomain"]];
 			If[!silent,Print["Length of Groebner Basis in ",commalg," is ",Length[commalg["gb"]]]];
 			commalg["gb"]
-		);
+		];
 	];
-	commalg["CanonicalForm"][expr_]:=Collect[PolynomialReduce[expr,commalg["gb"],commalg["generators"],MonomialOrder->commalg["monomialorder"],CoefficientDomain->commalg["coefficientdomain"]][[2]],commalg["generators"],Factor];
+	commalg["Reduce"][expr_]:=PolynomialReduce[expr,commalg["gb"],commalg["generators"],MonomialOrder->commalg["monomialorder"],CoefficientDomain->commalg["coefficientdomain"]];
+	commalg["CanonicalForm"][expr_]:=Collect[commalg["Reduce"][expr][[2]],commalg["generators"],Factor];
 	(*Defining Filtration*)
 	CommutativeAlgebra`Graded`DefineFiltration[commalg];
 	If[!Value[commalg["HomogeneousQ"][]],
@@ -425,20 +486,34 @@ Define[commalg_]:=Module[
 		];
 	];
 	(*Defining basis by degree of the highest term*)
-	commalg["gbasis"][deg_]:={}/;deg<0;
-	commalg["gbasis"][0]={1};
+	commalg["gbasis"][deg_?(commalg["InadmissibleGradingQ"])]:={};
+	commalg["gbasis"][commalg["ZeroDeg"]]={1};
 	commalg["gbasis"][deg_]:=commalg["gbasis"][deg]=Module[
 		{ans1,ans2,ans}
 	,
 		ans1=Select[commalg["generators"],commalg["Deg"][#]==deg&];
 		ans2=Table[commalg["generators"][[i]]commalg["gbasis"][deg-commalg["Deg"][commalg["generators"][[i]]]],{i,1,Length[commalg["generators"]]}];
 		commalg["gb"];(*Evaluating Groebner basis on a single core before executing Parallel Table*)
-		ans=DeleteCases[ParallelMap[commalg["CanonicalForm"],DeleteDuplicates[Flatten[{ans1,ans2}]]],_Plus];
+		ans=DeleteCases[(*Parallel*)Map[commalg["CanonicalForm"],DeleteDuplicates[Flatten[{ans1,ans2}]]],_Plus];
 		ans=DeleteDuplicates[Map[FromCoefficientRules[{CoefficientRules[#,commalg["generators"]][[1,1]]->1},commalg["generators"]]&,ans]];
 		Return[Select[ans,commalg["Deg"][#]==deg&]];
 	];
-	commalg["fbasis"][deg_]:={}/;deg<0;
-	commalg["fbasis"][deg_]:=commalg["fbasis"][deg]=DeleteDuplicates[Join[commalg["fbasis"][deg-1],commalg["gbasis"][deg]]];
+	commalg["fbasis"][deg_?(commalg["InadmissibleGradingQ"])]:={};
+	commalg["fbasis"][deg_]:=commalg["fbasis"][deg]=If[NumberQ[deg],
+		DeleteDuplicates[Join[commalg["fbasis"][deg-1],commalg["gbasis"][deg]]]
+	,
+		Module[
+			{j,deglower,ans={}}
+		,
+			For[i=1,i<=Length[deg],i++,
+				deglower=deg;
+				deglower[[i]]-=1;
+				ans=DeleteDuplicates[Join[ans,commalg["fbasis"][deglower]]];
+			];
+			ans=DeleteDuplicates[Join[ans,commalg["gbasis"][deg]]];
+			Return[ans]
+		]
+	];
 	(*Define Subleading Monomials*)
 	commalg["SortedPowers"][expr_]:=Module[
 		{monomials}
@@ -461,6 +536,314 @@ TestHomomorphism[algebra1_,algebra2_,subst_]:=Module[
 		];
 	];
 	Return[True];
+];
+
+DefineHomring[homring_,ring1_,ring2_,\[Phi]subst_]:=(
+	homring["generators"]=Join[ring2["generators"],ring1["generators"]];
+	homring["monomialorder"]=ProductOrder[ring2["monomialorder"],ring1["monomialorder"]];
+	homring["relations"]=Join[Map[#-(#/.\[Phi]subst)&,ring1["generators"]],ring2["relations"]];
+	Define[homring];
+	homring["kernel"]:=homring["kernel"]=Select[homring["gb"],Intersection[Variables[#],ring2["generators"]]=={}&];
+);
+
+End[]
+
+Begin["`ExternalLink`"]
+
+(*Parameters for variable names*)
+minlength=1;
+alphabet=Join[Alphabet[],Alphabet["English","IndexCharacters"]];
+shortprefixname="ShortVarName";
+
+ShortVar[num_]:=Module[
+	{indtab}
+,
+	indtab=IntegerDigits[num-1,Length[alphabet]];
+	If[Length[indtab]<1,
+		indtab=PadLeft[indtab,1];
+	];
+	Return[ToExpression[shortprefixname<>StringJoin@@Map[alphabet[[#+1]]&,indtab]]];
+];
+
+ShortSubst[vars_]:=Module[
+	{indexvariable}
+,
+	Return[Table[vars[[indexvariable]]->SingularVar[indexvariable],{indexvariable,1,Length[vars]}]];
+];
+
+ShortSubstInverse[vars_]:=Module[
+	{indexvariable}
+,
+	Return[Table[ShortVar[indexvariable]->vars[[indexvariable]],{indexvariable,1,Length[vars]}]];
+];
+
+RestorePrefixStringSubst[numberofvariables_]:=Module[
+	{variablenames,index}
+,
+	variablenames=Table[ToString[ShortVar[index]],{index,1,numberofvariables}];
+	Return[Map[StringReplace[#,shortprefixname->""]->#&,variablenames]];
+];
+
+(*The following function computes the Grorebner basis over C using Singular*)
+SingularVar:=ShortVar;
+SingularSubst:=ShortSubst;
+SingularSubstInverse:=ShortSubstInverse;
+
+SingularGB[commalg_,monomialorder_]:=Module[
+	{
+		i,datestring,inputfile,outputfile,inputfilestream,
+		singularvars,singularrels,subst1,subst2,gbSingular,
+		generators=commalg["generators"](*TDefault is weighted reverse lexicographic order*)
+	}
+,
+	If[!DirectoryQ[logdir],
+		CreateDirectory[logdir]
+	];
+	(*Defining File Names*)
+	datestring=ToString[Date[]];
+	inputfile=FileNameJoin[{logdir,datestring<>".in"}];
+	inputfilestream=OpenWrite[inputfile];
+	If[inputfilestream===$Failed,
+		Print["Cannot open file ",inputfile];
+		Return[Indeterminate];
+	];
+	outputfile=FileNameJoin[{logdir,datestring<>".out"}];
+	(*Generating Commands for Singular*)
+	singularvars=Table[Var[i],{i,1,Length[generators]}];
+	subst1=GetSubst[generators];
+	Print[subst1];
+	singularrels=commalg["relations"]/.subst1;
+	WriteString[inputfilestream,"LIB \"general.lib\";\n"];
+	WriteString[inputfilestream,"ring coordinatering=0,"<>StringReplace[ToString[Table[Var[i],{i,1,Length[generators]}]],{"{"->"(","}"->")"}]<>monomialorder<>";\n"];
+	WriteString[inputfilestream,"ideal definingideal ="<>StringReplace[ToString[InputForm[singularrels]],{"{"->"","}"->""}]<>";\n"];
+	WriteString[inputfilestream,"option(prot);\n"];
+	WriteString[inputfilestream,"option(redSB);\n"];
+	WriteString[inputfilestream,"ideal stddefiningideal=groebner(definingideal,\"slimgb\");\n"];
+	WriteString[inputfilestream,"write(\":w "<>StringReplace[outputfile,{"\\"->"\\\\"}]<>"\",stddefiningideal);\n"];
+	Close[inputfilestream];
+	(*Executing the Singular*)
+	Interrupt[];
+	(*Reading the answer*)
+	gbSingular=ToExpression["{"<>Import[outputfile,"String"]<>"}"];
+	subst2=GetSubstInverse[generators];
+	Print[subst2];
+	Return[gbSingular/.subst2];
+];
+
+(*Functions for Magma interface*)
+
+MagmaFileName[commalg_,monomialorder_]:="Magma-"<>ToString[{Length[commalg["generators"]],Length[commalg["relations"]],Hash[{commalg["generators"],commalg["relations"],commalg["MonomialOrder"],monomialorder},"CRC32","HexString"]}];
+
+MagmaWord[var_]:=Module[
+	{vartab=var}
+,
+	Switch[var,
+	_?AtomQ,
+		ToString[var],
+	_Subscript,
+		vartab[[0]]=List;
+		StringReplace[MagmaWord[vartab[[1]]]<>StringJoin@@Map[ToString,Drop[vartab,1]]," "->""],
+	_,
+		Print["Unexpected type of variable, ",var];
+		Indeterminate
+	]	
+];
+
+MagmaSubst[vars_]:=Map[#->ToExpression[MagmaWord[#]]&,vars];
+
+MagmaSubstInverse[vars_]:=Map[ToExpression[MagmaWord[#]]->#&,vars];
+
+MagmaGenerateInputFile[commalg_,monomialorder_]:=Module[
+	{
+		inputfile,outputfile,
+		magmavars,magmarels,subst,
+		inputfilestream
+	}
+,
+	If[!DirectoryQ[logdir],
+		CreateDirectory[logdir]
+	];
+	(*Defining input file name*)
+	inputfile=FileNameJoin[{logdir,MagmaFileName[commalg,monomialorder]<>".in"}];
+	outputfile=MagmaFileName[commalg,monomialorder]<>".out";
+	(*Converting variables*)
+	subst=MagmaSubst[commalg["generators"]];
+	magmavars=commalg["generators"]/.subst;
+	If[
+		(magmavars/.MagmaSubstInverse[commalg["generators"]])=!=commalg["generators"]
+	,
+		Print["Failed to define mutually inverse substitution"];
+		Print[MagmaSubst[commalg["generators"]]];
+		Print[MagmaSubstInverse[commalg["generators"]]];
+		Return[Indeterminate];
+	];
+	magmarels=commalg["relations"]/.subst;
+	(*Creating input file*)
+	inputfilestream=OpenWrite[inputfile];
+	WriteString[inputfilestream,"k:=RationalField();\n"];
+	WriteString[inputfilestream,
+		"P"
+	<>
+		StringReplace[ToString[magmavars],{"{"->"<","}"->">"}]
+	<>
+		":=PolynomialRing(k,"
+	<>
+		ToString[Length[commalg["generators"]]]
+	<>
+		", "
+	<>
+		monomialorder
+	<>
+		");\n"
+	];
+	WriteString[inputfilestream,
+		"I:=ideal<P | "
+	<>
+		StringReplace[ToString[InputForm[magmarels]],{"{"->"","}"->""}]
+	<>
+		">;\n"
+	];
+	WriteString[inputfilestream,"time B:= GroebnerBasis(I);\n"];
+	WriteString[inputfilestream,"#B;\n"];
+	WriteString[inputfilestream,"PrintFile(\""<>outputfile<>"\", B);\n"];
+	Close[inputfilestream];
+];
+
+MagmaGenerateInputFile[commalg_]:=Module[
+	{monomialorder}
+,
+	monomialorder="(\"weight\","<>StringReplace[ToString[commalg["monomialorder"]],{"{"->"","}"->""}]<>")";
+	MagmaGenerateInputFile[commalg,monomialorder];
+];
+
+MagmaGB[commalg_,monomialorder___]:=Module[
+	{
+		outputfile
+	}
+,
+	(*Defining outputfile name*)
+	outputfile=MagmaFileName[commalg,monomialorder]<>".out";
+	(*Generating Commands for Magma only if file does not exist*)
+	If[!FileExistsQ[outputfile],
+		MagmaGenerateInputFile[commalg,monomialorder];
+		(*Waiting for output to be generated*)
+		Interrupt[];
+	];
+];
+
+(*SageMath link*)
+
+SageFileName[commalg_]:="Sage-"<>ToString[{Length[commalg["generators"]],Length[commalg["relations"]],Hash[{commalg["generators"],commalg["relations"],commalg["monomialorder"]},"CRC32","HexString"]}];
+
+SageGenerateInputFile[commalg_]:=Module[
+	{
+		inputfile,outputfile,
+		sagevars,sagerels,subst,
+		inputfilestream
+	}
+,
+	If[!ValueQ[commalg["cachedir"]],
+		Print["Cache directory is not set for ",commalg];
+		Return[Indeterminate]
+	];
+	If[!DirectoryQ[commalg["cachedir"]],
+		Print[CreateDirectory[commalg["cachedir"]]]
+	];
+	(*Setting default options for Groebner Basis computations in sage*)
+	If[!ValueQ[commalg["sageGBoptions"]],
+		commalg["sageGBoptions"]="algorithm='singular:slimgb',prot=True,redSB=True";
+		inputfile=FileNameJoin[{commalg["cachedir"],SageFileName[commalg]<>".sage"}]
+	,
+		inputfile=FileNameJoin[{commalg["cachedir"],SageFileName[commalg]<>"-options="<>ToString[ByteCount[commalg["sageGBoptions"]]]<>".sage"}]
+	];
+	(*Defining input file name*)
+	outputfile=SageFileName[commalg]<>".out";
+	(*Converting variables*)
+	subst=ShortSubst[commalg["generators"]];
+	sagevars=commalg["generators"]/.subst;
+	If[
+		(sagevars/.ShortSubstInverse[commalg["generators"]])=!=commalg["generators"]
+	,
+		Print["Failed to define mutually inverse substitution"];
+		Print[ShortSubst[commalg["generators"]]];
+		Print[ShortSubstInverse[commalg["generators"]]];
+		Return[Indeterminate];
+	];
+	sagerels=commalg["relations"]/.subst;
+	(*Creating input file*)
+	inputfilestream=OpenWrite[inputfile];
+	WriteString[inputfilestream,
+		"monomialordermatrix=matrix("
+	<>
+		ToString[Length[commalg["generators"]]]
+	<>
+		",["
+	<>
+		StringReplace[ToString[commalg["monomialorder"]],{"{"->"","}"->""}]
+	<>
+		"]);\n"
+	];
+	WriteString[inputfile,"termordervariable=TermOrder(monomialordermatrix);\n"];
+	WriteString[inputfile,
+		"polynomialring.<"
+	<>
+		StringReplace[ToString[sagevars],{"{"->"","}"->"",shortprefixname->""}]
+	<>
+		">=PolynomialRing(QQ,"
+	<>
+		ToString[Length[commalg["generators"]]]
+	<>
+		",order=termordervariable);\n"
+	];
+	WriteString[inputfile,
+		"definingideal=ideal("
+	<>
+		StringReplace[ToString[InputForm[sagerels]],{"{"->"","}"->"","\""->"",shortprefixname->""}]
+	<>
+		");\n"
+	];
+	WriteString[inputfilestream,"polynomialring;\n"];
+	WriteString[inputfilestream,"groebnerbasis=definingideal.groebner_basis("<>commalg["sageGBoptions"]<>");\n"];
+	WriteString[inputfilestream,
+		"outfile=open('"
+	<>
+		outputfile
+	<>
+		"','w');\n"
+	];
+	WriteString[inputfilestream,"indextable=[1..len(groebnerbasis)];\n"];
+	WriteString[inputfilestream,"for kcountervariable in indextable: outfile.write(str(groebnerbasis[len(groebnerbasis)-kcountervariable])+'\\n');\n"];
+	WriteString[inputfilestream,"outfile.close();\n"];
+	Close[inputfilestream];
+];
+
+SageGB[commalg_]:=Module[
+	{cachedoutputfile,string,expr,ans={},outstream,substinverse,restoreprefixstringsubst}
+,
+	If[!ValueQ[commalg["cachedir"]],
+		Print["Cahce directory is not set for ",commalg];
+		Return[Indeterminate];
+	];
+	cachedoutputfile=FileNameJoin[{commalg["cachedir"],SageFileName[commalg]<>".out"}];
+	If[!FileExistsQ[cachedoutputfile],
+		SageGenerateInputFile[commalg];
+		Interrupt[];
+	];
+	restoreprefixstringsubst=RestorePrefixStringSubst[Length[commalg["generators"]]];
+	substinverse=ShortSubstInverse[commalg["generators"]];
+	If[FileExistsQ[cachedoutputfile],
+		outstream=OpenRead[cachedoutputfile];
+		While[(string=ReadLine[outstream])=!=EndOfFile,
+			string=StringReplace[string,{"["->"{","]"->"}"}];
+			string=StringReplace[string,restoreprefixstringsubst];
+			expr=ToExpression[string]/.substinverse;
+			AppendTo[ans,expr];
+		];
+		Close[outstream]
+	,
+		Return[Indeterminate]
+	];
+	Return[ans];
 ];
 
 End[]
@@ -561,6 +944,3 @@ DefineMixedSpan[commalg_,SimplifyF_]:=Module[
 End[]
 
 EndPackage[]
-
-
-
